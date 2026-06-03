@@ -2,110 +2,120 @@ import XCTest
 import CoreMotion
 @testable import gymOS
 
-// Tests the RepClassifier state machine using synthetic accelerometer data.
-// These are unit tests with fabricated CMAccelerometerData — not real motion.
-// Real-world calibration is done separately (scripts/calibrate.sh).
+// Tests RepClassifier state machine using synthetic CMDeviceMotion data.
+// CMDeviceMotion.userAcceleration is gravity-free — at rest all axes = 0.
 
 final class RepClassifierTests: XCTestCase {
 
-    private func makeClassifier() -> RepClassifier {
-        RepClassifier(exercise: ExerciseCatalog.benchPress)
+    private func makeClassifier(alpha: Double = 1.0) -> RepClassifier {
+        // alpha=1.0 disables EMA smoothing in tests — raw values pass through
+        // so test assertions match exactly what we feed in.
+        var def = ExerciseCatalog.benchPress
+        def = ExerciseDefinition(
+            name: def.name, shortName: def.shortName,
+            muscleGroup: def.muscleGroup, dominantAxis: def.dominantAxis,
+            motionDirection: def.motionDirection,
+            repMinDuration: def.repMinDuration, repMaxDuration: def.repMaxDuration,
+            accelerationThreshold: def.accelerationThreshold,
+            smoothingAlpha: alpha
+        )
+        return RepClassifier(exercise: def)
     }
 
-    // Simulate a single clean rep: Y axis rises above threshold, holds, returns below.
     private func simulateRep(
         classifier: RepClassifier,
-        peakAcceleration: Double = 2.0,
+        peakAcceleration: Double = 1.5,
         durationSeconds: Double = 0.5,
-        timestamp: TimeInterval = 0
+        startTimestamp: TimeInterval = 0
     ) {
-        let sampleInterval = 0.02   // 50Hz
-        var t = timestamp
+        let sampleInterval = 0.02
         let steps = Int(durationSeconds / sampleInterval)
 
         for i in 0..<steps {
             let progress = Double(i) / Double(steps)
-            // Sine curve: rises to peak, returns below threshold
             let value = peakAcceleration * sin(.pi * progress)
-            classifier.processSample(makeSample(y: value, timestamp: t))
-            t += sampleInterval
+            classifier.processSample(
+                CMDeviceMotionStub(y: value, timestamp: startTimestamp + Double(i) * sampleInterval)
+            )
         }
-        // Final sample below threshold to complete the rep
-        classifier.processSample(makeSample(y: 0.0, timestamp: t))
-    }
-
-    private func makeSample(x: Double = 0, y: Double = 0, z: Double = 0, timestamp: TimeInterval = 0) -> CMAccelerometerData {
-        CMAccelerometerDataStub(x: x, y: y, z: z, timestamp: timestamp)
+        classifier.processSample(
+            CMDeviceMotionStub(y: 0.0, timestamp: startTimestamp + durationSeconds)
+        )
     }
 
     func test_single_rep_detected() {
         let classifier = makeClassifier()
         var count = 0
         classifier.delegate = RepDelegate { c, _ in count = c }
-
         simulateRep(classifier: classifier)
-
         XCTAssertEqual(count, 1)
         XCTAssertEqual(classifier.repCount, 1)
     }
 
     func test_five_reps_detected() {
         let classifier = makeClassifier()
-        var t: TimeInterval = 0
-
-        for _ in 0..<5 {
-            simulateRep(classifier: classifier, timestamp: t)
-            t += 0.7   // 0.5s rep + 0.2s rest between reps
+        for i in 0..<5 {
+            simulateRep(classifier: classifier, startTimestamp: Double(i) * 0.8)
         }
-
         XCTAssertEqual(classifier.repCount, 5)
     }
 
     func test_no_rep_below_threshold() {
         let classifier = makeClassifier()
-        // Below threshold (1.5g for bench)
-        for _ in 0..<100 {
-            classifier.processSample(makeSample(y: 0.8))
+        for i in 0..<100 {
+            classifier.processSample(CMDeviceMotionStub(y: 0.3, timestamp: Double(i) * 0.02))
         }
         XCTAssertEqual(classifier.repCount, 0)
     }
 
     func test_no_rep_when_duration_too_short() {
         let classifier = makeClassifier()
-        // Peak above threshold but returns below before min duration (0.3s)
-        classifier.processSample(makeSample(y: 2.0, timestamp: 0))
-        classifier.processSample(makeSample(y: 0.0, timestamp: 0.1))  // only 0.1s
+        // Spike for 0.1s — below repMinDuration (0.3s)
+        classifier.processSample(CMDeviceMotionStub(y: 1.5, timestamp: 0.0))
+        classifier.processSample(CMDeviceMotionStub(y: 0.0, timestamp: 0.1))
         XCTAssertEqual(classifier.repCount, 0)
     }
 
-    func test_no_rep_when_duration_too_long() {
+    func test_no_rep_when_duration_exceeds_max() {
         let classifier = makeClassifier()
-        // Above threshold for 4 seconds — exceeds repMaxDuration (3.0s), should timeout
-        let sampleInterval = 0.02
-        var t: TimeInterval = 0
-        for _ in 0..<200 {  // 4 seconds
-            classifier.processSample(makeSample(y: 2.0, timestamp: t))
-            t += sampleInterval
+        let interval = 0.02
+        // Hold above threshold for 4s — exceeds repMaxDuration (3.0s)
+        for i in 0..<200 {
+            classifier.processSample(CMDeviceMotionStub(y: 1.5, timestamp: Double(i) * interval))
         }
-        classifier.processSample(makeSample(y: 0.0, timestamp: t))
+        classifier.processSample(CMDeviceMotionStub(y: 0.0, timestamp: 200 * interval))
         XCTAssertEqual(classifier.repCount, 0)
     }
 
     func test_velocity_sample_recorded_per_rep() {
         let classifier = makeClassifier()
-        simulateRep(classifier: classifier, peakAcceleration: 2.5)
+        simulateRep(classifier: classifier, peakAcceleration: 2.0)
         XCTAssertEqual(classifier.velocitySamples.count, 1)
         XCTAssertGreaterThan(classifier.velocitySamples[0], 0)
     }
 
-    func test_reset_clears_state() {
+    func test_reset_clears_all_state() {
         let classifier = makeClassifier()
         simulateRep(classifier: classifier)
         XCTAssertEqual(classifier.repCount, 1)
-
         classifier.reset()
         XCTAssertEqual(classifier.repCount, 0)
         XCTAssertTrue(classifier.velocitySamples.isEmpty)
+    }
+
+    func test_ema_smoothing_blocks_single_spike() {
+        // Use real alpha — spike should be dampened below threshold
+        let classifier = makeClassifier(alpha: 0.25)
+        // Warm up filter at zero
+        for i in 0..<30 {
+            classifier.processSample(CMDeviceMotionStub(y: 0.0, timestamp: Double(i) * 0.02))
+        }
+        // Single spike — one sample above threshold, immediately returns to 0
+        classifier.processSample(CMDeviceMotionStub(y: 5.0, timestamp: 0.62))
+        classifier.processSample(CMDeviceMotionStub(y: 0.0, timestamp: 0.64))
+        // With alpha=0.25: filtered spike = 0.25×5 + 0.75×0 = 1.25g — just above threshold
+        // but below duration gate (only 0.02s), so no rep
+        XCTAssertEqual(classifier.repCount, 0)
     }
 }
 
@@ -119,18 +129,18 @@ private final class RepDelegate: RepClassifierDelegate {
     }
 }
 
-// CMAccelerometerData is not directly instantiable — stub via subclass.
-private final class CMAccelerometerDataStub: CMAccelerometerData {
+// Stub CMDeviceMotion — inject userAcceleration values for testing
+final class CMDeviceMotionStub: CMDeviceMotion {
     private let _x: Double, _y: Double, _z: Double, _ts: TimeInterval
 
-    init(x: Double, y: Double, z: Double, timestamp: TimeInterval) {
+    init(x: Double = 0, y: Double = 0, z: Double = 0, timestamp: TimeInterval = 0) {
         _x = x; _y = y; _z = z; _ts = timestamp
         super.init()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var acceleration: CMAcceleration {
+    override var userAcceleration: CMAcceleration {
         CMAcceleration(x: _x, y: _y, z: _z)
     }
     override var timestamp: TimeInterval { _ts }

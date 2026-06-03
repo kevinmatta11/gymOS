@@ -2,8 +2,8 @@ import Foundation
 import CoreMotion
 import Combine
 
-// Owns the CMMotionManager. Bridges raw accelerometer samples to RepClassifier and RestDetector.
-// One instance per Watch session — start(for:) begins a set, stop() ends it.
+// Owns CMMotionManager. Uses deviceMotion (not raw accelerometer) for gravity-free
+// userAcceleration — cleaner signal for both rep detection and rest detection.
 
 @MainActor
 final class MotionManager: ObservableObject {
@@ -18,14 +18,17 @@ final class MotionManager: ObservableObject {
     private var classifier: RepClassifier?
     private let restDetector = RestDetector()
 
-    private let sampleFrequency: Double = 50   // Hz
+    private let sampleFrequency: Double = 50  // Hz
 
     private init() {}
 
-    func start(for exercise: ExerciseDefinition) {
-        guard motionManager.isAccelerometerAvailable else { return }
+    func start(for exercise: ExerciseDefinition, calibratedThreshold: Double? = nil) {
+        guard motionManager.isDeviceMotionAvailable else { return }
 
-        let newClassifier = RepClassifier(exercise: exercise)
+        let newClassifier = RepClassifier(
+            exercise: exercise,
+            calibratedThreshold: calibratedThreshold
+        )
         newClassifier.delegate = self
         classifier = newClassifier
         restDetector.reset()
@@ -34,11 +37,11 @@ final class MotionManager: ObservableObject {
             Task { @MainActor in self?.handleRestDetected() }
         }
 
-        motionManager.accelerometerUpdateInterval = 1.0 / sampleFrequency
-        motionManager.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
-            guard let self, let data else { return }
-            self.classifier?.processSample(data)
-            self.restDetector.processSample(data)
+        motionManager.deviceMotionUpdateInterval = 1.0 / sampleFrequency
+        motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
+            guard let self, let motion else { return }
+            self.classifier?.processSample(motion)
+            self.restDetector.processSample(motion)
         }
 
         repCount = 0
@@ -46,7 +49,7 @@ final class MotionManager: ObservableObject {
     }
 
     func stop() {
-        motionManager.stopAccelerometerUpdates()
+        motionManager.stopDeviceMotionUpdates()
         isDetecting = false
     }
 
@@ -60,8 +63,6 @@ final class MotionManager: ObservableObject {
 
 extension MotionManager: RepClassifierDelegate {
     nonisolated func classifierDidDetectRep(repCount: Int, peakAcceleration: Double) {
-        Task { @MainActor in
-            self.repCount = repCount
-        }
+        Task { @MainActor in self.repCount = repCount }
     }
 }

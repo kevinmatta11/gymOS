@@ -11,7 +11,6 @@ enum WeightUnit: String, Codable, CaseIterable {
         }
     }
 
-    // Convert from internal lbs storage to display unit
     func converted(_ lbs: Double) -> Double {
         switch self {
         case .lbs: return lbs
@@ -19,7 +18,6 @@ enum WeightUnit: String, Codable, CaseIterable {
         }
     }
 
-    // Convert from display unit back to internal lbs storage
     func toLbs(_ value: Double) -> Double {
         switch self {
         case .lbs: return value
@@ -40,8 +38,41 @@ final class UserSettings {
     @Attribute(.unique) var id: UUID
     var weightUnit: WeightUnit
 
-    init(id: UUID = UUID(), weightUnit: WeightUnit = .lbs) {
+    // Calibrated thresholds — keyed by exercise id (UUID string for Codable compatibility).
+    // When present, RepClassifier uses these instead of ExerciseCatalog defaults.
+    var calibratedThresholds: [String: Double]
+
+    // When each exercise was last calibrated — surfaced in CalibrationView.
+    var calibrationDates: [String: Date]
+
+    init(
+        id: UUID = UUID(),
+        weightUnit: WeightUnit = .lbs,
+        calibratedThresholds: [String: Double] = [:],
+        calibrationDates: [String: Date] = [:]
+    ) {
         self.id = id
         self.weightUnit = weightUnit
+        self.calibratedThresholds = calibratedThresholds
+        self.calibrationDates = calibrationDates
+    }
+
+    // MARK: — Calibration helpers
+
+    func threshold(for exerciseId: UUID, default fallback: Double) -> Double {
+        calibratedThresholds[exerciseId.uuidString] ?? fallback
+    }
+
+    func setCalibrated(threshold: Double, for exerciseId: UUID) {
+        calibratedThresholds[exerciseId.uuidString] = threshold
+        calibrationDates[exerciseId.uuidString] = Date()
+    }
+
+    func calibrationDate(for exerciseId: UUID) -> Date? {
+        calibrationDates[exerciseId.uuidString]
+    }
+
+    func isCalibrated(for exerciseId: UUID) -> Bool {
+        calibratedThresholds[exerciseId.uuidString] != nil
     }
 }

@@ -1,7 +1,9 @@
 import Foundation
 
 // Static catalog of the 5 MVP exercises.
-// accelerationThreshold values are starting points — calibration in A7 will tune these.
+// accelerationThreshold values are starting points for CMDeviceMotion.userAcceleration.
+// smoothingAlpha controls the EMA low-pass filter per exercise — tuned to each movement speed.
+// Both are overridden per-user after calibration.
 enum ExerciseCatalog {
     static let all: [ExerciseDefinition] = [
         benchPress,
@@ -16,8 +18,9 @@ enum ExerciseCatalog {
         shortName: "Bench",
         muscleGroup: .chest,
         dominantAxis: .y,
-        motionDirection: .positive,     // wrist pushes away from body
-        accelerationThreshold: 1.5      // g — tunable via calibration
+        motionDirection: .positive,      // wrist pushes away from body (concentric)
+        accelerationThreshold: 0.8,      // lower than before — userAcceleration is gravity-free
+        smoothingAlpha: 0.25             // moderate speed movement
     )
 
     static let backSquat = ExerciseDefinition(
@@ -25,8 +28,9 @@ enum ExerciseCatalog {
         shortName: "Squat",
         muscleGroup: .legs,
         dominantAxis: .z,
-        motionDirection: .negative,     // wrist descends during squat
-        accelerationThreshold: 1.8
+        motionDirection: .negative,      // wrist descends on the way down (eccentric)
+        accelerationThreshold: 1.0,      // squat generates more force
+        smoothingAlpha: 0.20             // slow movement, heavy smoothing
     )
 
     static let pullUp = ExerciseDefinition(
@@ -34,8 +38,9 @@ enum ExerciseCatalog {
         shortName: "Pull-up",
         muscleGroup: .back,
         dominantAxis: .z,
-        motionDirection: .positive,     // wrist rises toward bar
-        accelerationThreshold: 2.0
+        motionDirection: .positive,      // wrist rises toward bar (concentric)
+        accelerationThreshold: 1.2,      // explosive movement, higher peak
+        smoothingAlpha: 0.30             // faster, less smoothing to avoid lag
     )
 
     static let overheadPress = ExerciseDefinition(
@@ -43,9 +48,10 @@ enum ExerciseCatalog {
         shortName: "OHP",
         muscleGroup: .shoulders,
         dominantAxis: .z,
-        motionDirection: .positive,     // wrist presses upward — larger ROM than pull-up
-        repMinDuration: 0.4,            // OHP is slower than pull-up
-        accelerationThreshold: 1.6
+        motionDirection: .positive,      // wrist presses upward
+        repMinDuration: 0.4,             // OHP is slower than pull-up
+        accelerationThreshold: 0.9,
+        smoothingAlpha: 0.20             // slow and deliberate
     )
 
     static let barbellRow = ExerciseDefinition(
@@ -53,13 +59,13 @@ enum ExerciseCatalog {
         shortName: "Row",
         muscleGroup: .back,
         dominantAxis: .y,
-        motionDirection: .negative,     // wrist pulls toward body
-        accelerationThreshold: 1.7
+        motionDirection: .negative,      // wrist pulls toward body (concentric)
+        accelerationThreshold: 0.9,
+        smoothingAlpha: 0.25
     )
 }
 
-// Plain struct used to seed ExerciseCatalog into SwiftData.
-// Not a @Model — that lives in Exercise.swift.
+// Plain struct — not a @Model. Seeds into SwiftData via toExercise().
 struct ExerciseDefinition {
     let name: String
     let shortName: String
@@ -69,6 +75,7 @@ struct ExerciseDefinition {
     let repMinDuration: Double
     let repMaxDuration: Double
     let accelerationThreshold: Double
+    let smoothingAlpha: Double
 
     init(
         name: String,
@@ -78,7 +85,8 @@ struct ExerciseDefinition {
         motionDirection: MotionDirection,
         repMinDuration: Double = 0.3,
         repMaxDuration: Double = 3.0,
-        accelerationThreshold: Double
+        accelerationThreshold: Double,
+        smoothingAlpha: Double = 0.25
     ) {
         self.name = name
         self.shortName = shortName
@@ -88,6 +96,7 @@ struct ExerciseDefinition {
         self.repMinDuration = repMinDuration
         self.repMaxDuration = repMaxDuration
         self.accelerationThreshold = accelerationThreshold
+        self.smoothingAlpha = smoothingAlpha
     }
 
     func toExercise() -> Exercise {

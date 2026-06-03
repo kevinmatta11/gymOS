@@ -1,16 +1,14 @@
 import Foundation
 import CoreMotion
 
-// Detects reps and measures velocity for a single known exercise.
-// Stateful — one instance per active set. Reset between sets.
+// Detects reps for a single known exercise using CMDeviceMotion.userAcceleration.
+// userAcceleration is gravity-free — clean dynamic signal from the lift only.
 //
-// Algorithm: state machine on the dominant accelerometer axis.
-// IDLE → ACTIVE when acceleration exceeds threshold in expected direction.
-// ACTIVE → COMPLETE when acceleration returns below threshold and duration is within gate.
-// ACTIVE → IDLE (timeout) if duration exceeds repMaxDuration without returning.
+// Pipeline per sample:
+//   raw userAcceleration → EMA filter (per axis) → dominant axis extraction
+//   → direction sign → state machine (IDLE → ACTIVE → COMPLETE)
 //
-// Velocity estimate: peak acceleration during the ACTIVE phase = proxy for bar velocity.
-// Higher peak = more force = faster movement.
+// Velocity estimate: peak filtered acceleration during ACTIVE phase.
 
 protocol RepClassifierDelegate: AnyObject {
     func classifierDidDetectRep(repCount: Int, peakAcceleration: Double)
@@ -18,24 +16,35 @@ protocol RepClassifierDelegate: AnyObject {
 
 final class RepClassifier {
     private let exercise: ExerciseDefinition
+    private let threshold: Double           // calibrated or catalog default
 
     private(set) var repCount: Int = 0
     private(set) var velocitySamples: [Double] = []
 
     weak var delegate: RepClassifierDelegate?
 
+    // EMA filters — one per axis, reset between sets
+    private var filterX: EMAFilter
+    private var filterY: EMAFilter
+    private var filterZ: EMAFilter
+
     // State machine
     private enum State { case idle, active }
     private var state: State = .idle
     private var phaseStartTime: Date?
-    private var peakAccelerationInPhase: Double = 0
+    private var peakInPhase: Double = 0
 
-    // Cooldown after a completed rep — prevents double counting on noisy signal
-    private let repCooldownSeconds: Double = 0.25
+    // Minimum time between rep completions — prevents double-count on oscillation
+    private let repCooldown: Double = 0.25
     private var lastRepTime: Date?
 
-    init(exercise: ExerciseDefinition) {
+    init(exercise: ExerciseDefinition, calibratedThreshold: Double? = nil) {
         self.exercise = exercise
+        self.threshold = calibratedThreshold ?? exercise.accelerationThreshold
+        let alpha = exercise.smoothingAlpha
+        filterX = EMAFilter(alpha: alpha)
+        filterY = EMAFilter(alpha: alpha)
+        filterZ = EMAFilter(alpha: alpha)
     }
 
     func reset() {
@@ -43,61 +52,71 @@ final class RepClassifier {
         velocitySamples = []
         state = .idle
         phaseStartTime = nil
-        peakAccelerationInPhase = 0
+        peakInPhase = 0
         lastRepTime = nil
+        filterX.reset()
+        filterY.reset()
+        filterZ.reset()
     }
 
-    // Feed one accelerometer sample. Call at ~50Hz from MotionManager.
-    func processSample(_ data: CMAccelerometerData) {
-        let value = axisValue(from: data.acceleration)
-        let signed = exercise.motionDirection == .positive ? value : -value
-        let now = data.timestamp  // monotonic clock, seconds since boot
+    // Feed one CMDeviceMotion sample. Call at ~50Hz from MotionManager.
+    func processSample(_ motion: CMDeviceMotion) {
+        let ua = motion.userAcceleration
+
+        // Apply EMA filter per axis
+        let x = filterX.process(ua.x)
+        let y = filterY.process(ua.y)
+        let z = filterZ.process(ua.z)
+
+        // Extract dominant axis, apply direction sign
+        let raw = axisValue(x: x, y: y, z: z)
+        let signed = exercise.motionDirection == .positive ? raw : -raw
+
+        let now = Date()
 
         switch state {
         case .idle:
-            guard signed >= exercise.accelerationThreshold else { return }
-            // Check cooldown — don't start a new rep immediately after the last one
-            if let last = lastRepTime, Date().timeIntervalSince(last) < repCooldownSeconds { return }
+            guard signed >= threshold else { return }
+            if let last = lastRepTime, now.timeIntervalSince(last) < repCooldown { return }
             state = .active
-            phaseStartTime = Date()
-            peakAccelerationInPhase = signed
+            phaseStartTime = now
+            peakInPhase = signed
 
         case .active:
-            peakAccelerationInPhase = max(peakAccelerationInPhase, signed)
-
-            let elapsed = phaseStartTime.map { Date().timeIntervalSince($0) } ?? 0
+            peakInPhase = max(peakInPhase, signed)
+            let elapsed = phaseStartTime.map { now.timeIntervalSince($0) } ?? 0
 
             if elapsed > exercise.repMaxDuration {
-                // Took too long — not a rep, reset
+                // Movement lasted too long — not a rep, bail
                 state = .idle
                 phaseStartTime = nil
-                peakAccelerationInPhase = 0
+                peakInPhase = 0
                 return
             }
 
-            if signed < exercise.accelerationThreshold {
-                // Returned below threshold — check minimum duration
+            if signed < threshold {
+                // Returned below threshold — valid rep if duration gate passes
                 if elapsed >= exercise.repMinDuration {
                     repCount += 1
-                    velocitySamples.append(peakAccelerationInPhase)
-                    lastRepTime = Date()
+                    velocitySamples.append(peakInPhase)
+                    lastRepTime = now
                     delegate?.classifierDidDetectRep(
                         repCount: repCount,
-                        peakAcceleration: peakAccelerationInPhase
+                        peakAcceleration: peakInPhase
                     )
                 }
                 state = .idle
                 phaseStartTime = nil
-                peakAccelerationInPhase = 0
+                peakInPhase = 0
             }
         }
     }
 
-    private func axisValue(from acceleration: CMAcceleration) -> Double {
+    private func axisValue(x: Double, y: Double, z: Double) -> Double {
         switch exercise.dominantAxis {
-        case .x: return acceleration.x
-        case .y: return acceleration.y
-        case .z: return acceleration.z
+        case .x: return x
+        case .y: return y
+        case .z: return z
         }
     }
 }
