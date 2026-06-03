@@ -6,143 +6,255 @@ struct ProgressTabView: View {
     @StateObject private var viewModel: ProgressViewModel
     @Query(filter: #Predicate<Exercise> { $0.name == "Bench Press" }) private var benchExercises: [Exercise]
 
+    @State private var selectedTab: ProgressTab = .volume
+
+    enum ProgressTab: String, CaseIterable {
+        case volume = "Volume"
+        case oneRM  = "1RM"
+    }
+
     init(repository: WorkoutRepository) {
         _viewModel = StateObject(wrappedValue: ProgressViewModel(repository: repository))
     }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                WeeklyVolumeChart(entries: viewModel.weeklyVolume)
-                OneRMTrendChart(entries: viewModel.bench1RMTrend)
+        ZStack {
+            Color.bgBase.ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 20) {
+
+                    // Pill tab selector
+                    PillTabPicker(selection: $selectedTab, options: ProgressTab.allCases)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .tint(Color.textSecondary)
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    } else {
+                        switch selectedTab {
+                        case .volume:
+                            WeeklyVolumeSection(entries: viewModel.weeklyVolume)
+                                .padding(.horizontal, 16)
+                        case .oneRM:
+                            OneRMSection(entries: viewModel.bench1RMTrend)
+                                .padding(.horizontal, 16)
+                        }
+                    }
+
+                    Spacer().frame(height: 32)
+                }
             }
-            .padding()
         }
         .navigationTitle("Progress")
-        .task {
-            await viewModel.load(benchExerciseId: benchExercises.first?.id)
-        }
-        .overlay {
-            if viewModel.isLoading {
-                ProgressView()
-            }
-        }
+        .navigationBarTitleDisplayMode(.large)
+        .toolbarBackground(Color.bgBase, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .task { await viewModel.load(benchExerciseId: benchExercises.first?.id) }
     }
 }
 
-// MARK: — Weekly Volume Chart
+// MARK: — Pill tab picker
 
-private struct WeeklyVolumeChart: View {
-    let entries: [WeeklyVolumeEntry]
+private struct PillTabPicker<T: RawRepresentable & Hashable & CaseIterable>: View
+    where T.RawValue == String, T.AllCases: RandomAccessCollection {
 
-    private let groups: [MuscleGroup] = [.chest, .legs, .back, .shoulders]
-    private let groupColors: [MuscleGroup: Color] = [
-        .chest: .blue, .legs: .green, .back: .orange, .shoulders: .purple
-    ]
+    @Binding var selection: T
+    let options: T.AllCases
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Weekly Volume")
-                .font(.headline)
-            Text("by muscle group, trailing 8 weeks")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if entries.isEmpty {
-                emptyState
-            } else {
-                Chart {
-                    ForEach(entries) { entry in
-                        ForEach(groups, id: \.self) { group in
-                            BarMark(
-                                x: .value("Week", entry.weekStart, unit: .weekOfYear),
-                                y: .value("Volume (lbs)", entry.volumeByGroup[group] ?? 0)
-                            )
-                            .foregroundStyle(by: .value("Group", group.rawValue.capitalized))
-                        }
-                    }
+        HStack(spacing: 4) {
+            ForEach(Array(options), id: \.self) { option in
+                Button(action: { withAnimation(.easeInOut(duration: 0.2)) { selection = option } }) {
+                    Text(option.rawValue)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(selection == option ? Color.bgBase : Color.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(selection == option ? Color.textPrimary : Color.clear)
+                        )
                 }
-                .chartForegroundStyleScale([
-                    "Chest": Color.blue,
-                    "Legs": Color.green,
-                    "Back": Color.orange,
-                    "Shoulders": Color.purple
-                ])
-                .chartXAxis {
-                    AxisMarks(values: .stride(by: .weekOfYear)) { _ in
-                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                    }
-                }
-                .frame(height: 200)
+                .buttonStyle(.plain)
             }
         }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .padding(4)
+        .background(Color.bgCard)
+        .clipShape(RoundedRectangle(cornerRadius: 11))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11)
+                .stroke(Color.border, lineWidth: 0.5)
+        )
+    }
+}
+
+// MARK: — Weekly volume
+
+private struct WeeklyVolumeSection: View {
+    let entries: [WeeklyVolumeEntry]
+    private let groups: [MuscleGroup] = [.chest, .legs, .back, .shoulders]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            LabeledCard("Weekly Volume") {
+                if entries.isEmpty {
+                    emptyState
+                } else {
+                    Chart {
+                        ForEach(entries) { entry in
+                            ForEach(groups, id: \.self) { group in
+                                BarMark(
+                                    x: .value("Week", entry.weekStart, unit: .weekOfYear),
+                                    y: .value("lbs", entry.volumeByGroup[group] ?? 0)
+                                )
+                                .foregroundStyle(Color.chartColor(for: group))
+                                .cornerRadius(3)
+                            }
+                        }
+                    }
+                    .chartXAxis {
+                        AxisMarks(values: .stride(by: .weekOfYear)) { value in
+                            if let date = value.as(Date.self) {
+                                AxisValueLabel {
+                                    Text(date, format: .dateTime.month(.abbreviated).day())
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Color.textMuted)
+                                }
+                            }
+                        }
+                    }
+                    .chartYAxis {
+                        AxisMarks { value in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                                .foregroundStyle(Color.border)
+                            AxisValueLabel {
+                                if let v = value.as(Double.self) {
+                                    Text(v >= 1000 ? "\(Int(v/1000))k" : "\(Int(v))")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Color.textMuted)
+                                }
+                            }
+                        }
+                    }
+                    .chartPlotStyle { $0.background(Color.clear) }
+                    .frame(height: 180)
+
+                    MuscleGroupLegend(groups: groups)
+                        .padding(.top, 4)
+                }
+            }
+        }
     }
 
     private var emptyState: some View {
-        Text("No data yet — complete a session to see volume trends")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        Text("Complete a session to see volume trends")
+            .font(.body14)
+            .foregroundStyle(Color.textMuted)
             .frame(maxWidth: .infinity, minHeight: 80)
     }
 }
 
-// MARK: — 1RM Trend Chart
+// MARK: — 1RM trend
 
-private struct OneRMTrendChart: View {
+private struct OneRMSection: View {
     let entries: [OneRMEntry]
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Bench Press Estimated 1RM")
-                .font(.headline)
-            Text("Epley formula · ±10% confidence · trailing 12 weeks")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var latest: OneRMEntry? { entries.last }
+    private var previous: OneRMEntry? { entries.dropLast().last }
+    private var delta: Double? {
+        guard let l = latest, let p = previous else { return nil }
+        return l.epley1RM - p.epley1RM
+    }
 
+    var body: some View {
+        LabeledCard("Bench Press 1RM") {
             if entries.isEmpty {
-                Text("No bench press data yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Complete bench press sessions to see 1RM trend")
+                    .font(.body14)
+                    .foregroundStyle(Color.textMuted)
                     .frame(maxWidth: .infinity, minHeight: 80)
             } else {
-                Chart {
-                    // Confidence band
-                    ForEach(entries) { entry in
-                        AreaMark(
-                            x: .value("Date", entry.date),
-                            yStart: .value("Lower", entry.lower),
-                            yEnd: .value("Upper", entry.upper)
-                        )
-                        .foregroundStyle(.blue.opacity(0.15))
+                VStack(alignment: .leading, spacing: 16) {
+                    // Current estimate headline
+                    HStack(alignment: .bottom, spacing: 12) {
+                        if let latest {
+                            HeroNumber(
+                                value: "~\(Int(latest.epley1RM))",
+                                unit: "lbs estimated",
+                                size: 40
+                            )
+                        }
+                        if let d = delta {
+                            DeltaBadge(delta: d, unit: "lbs")
+                                .padding(.bottom, 6)
+                        }
                     }
-                    // Center line
-                    ForEach(entries) { entry in
-                        LineMark(
-                            x: .value("Date", entry.date),
-                            y: .value("1RM (lbs)", entry.epley1RM)
-                        )
-                        .foregroundStyle(.blue)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
 
-                        PointMark(
-                            x: .value("Date", entry.date),
-                            y: .value("1RM (lbs)", entry.epley1RM)
-                        )
-                        .foregroundStyle(.blue)
-                        .symbolSize(30)
+                    // Chart
+                    Chart {
+                        // Confidence band
+                        ForEach(entries) { entry in
+                            AreaMark(
+                                x: .value("Date", entry.date),
+                                yStart: .value("Lower", entry.lower),
+                                yEnd: .value("Upper", entry.upper)
+                            )
+                            .foregroundStyle(Color.chartChest.opacity(0.15))
+                            .interpolationMethod(.catmullRom)
+                        }
+                        // Center line
+                        ForEach(entries) { entry in
+                            LineMark(
+                                x: .value("Date", entry.date),
+                                y: .value("1RM", entry.epley1RM)
+                            )
+                            .foregroundStyle(Color.chartChest)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                            .interpolationMethod(.catmullRom)
+
+                            PointMark(
+                                x: .value("Date", entry.date),
+                                y: .value("1RM", entry.epley1RM)
+                            )
+                            .foregroundStyle(Color.chartChest)
+                            .symbolSize(20)
+                        }
                     }
-                }
-                .chartXAxis {
-                    AxisMarks(values: .stride(by: .weekOfYear, count: 2)) { _ in
-                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                    .chartXAxis {
+                        AxisMarks(values: .stride(by: .weekOfYear, count: 2)) { value in
+                            if let date = value.as(Date.self) {
+                                AxisValueLabel {
+                                    Text(date, format: .dateTime.month(.abbreviated).day())
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Color.textMuted)
+                                }
+                            }
+                        }
                     }
+                    .chartYAxis {
+                        AxisMarks { value in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                                .foregroundStyle(Color.border)
+                            AxisValueLabel {
+                                if let v = value.as(Double.self) {
+                                    Text("\(Int(v))")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Color.textMuted)
+                                }
+                            }
+                        }
+                    }
+                    .chartPlotStyle { $0.background(Color.clear) }
+                    .frame(height: 180)
+
+                    Text("Epley formula · ±10% confidence band")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.textMuted)
                 }
-                .frame(height: 200)
             }
         }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 }

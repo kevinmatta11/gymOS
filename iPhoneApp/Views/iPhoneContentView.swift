@@ -14,7 +14,7 @@ struct iPhoneContentView: View {
                 SessionListView()
             }
             .tabItem {
-                Label("Sessions", systemImage: "list.bullet.clipboard")
+                Label("Sessions", systemImage: "list.bullet.clipboard.fill")
             }
 
             NavigationStack {
@@ -28,8 +28,11 @@ struct iPhoneContentView: View {
                 SettingsView()
             }
             .tabItem {
-                Label("Settings", systemImage: "gear")
+                Label("Settings", systemImage: "gearshape.fill")
             }
         }
+        .tint(Color.textPrimary)
+        // Force dark mode — this app is dark-only
+        .preferredColorScheme(.dark)
     }
 }

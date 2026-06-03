@@ -1,115 +1,153 @@
 import SwiftUI
 import Charts
+import SwiftData
 
 struct SessionDetailView: View {
     let session: WorkoutSession
-    @Query private var settings: [UserSettings]
+    @Query private var allSettings: [UserSettings]
 
-    private var unit: WeightUnit { settings.first?.weightUnit ?? .lbs }
+    private var unit: WeightUnit { allSettings.first?.weightUnit ?? .lbs }
+    private var exerciseOrder: [UUID] {
+        var seen = Set<UUID>()
+        return session.sets
+            .sorted(by: { $0.timestamp < $1.timestamp })
+            .compactMap { set -> UUID? in
+                guard !seen.contains(set.exerciseId) else { return nil }
+                seen.insert(set.exerciseId)
+                return set.exerciseId
+            }
+    }
 
     var body: some View {
-        List {
-            ForEach(Array(session.setsByExercise.keys), id: \.self) { exerciseId in
-                let sets = session.setsByExercise[exerciseId] ?? []
-                guard let firstName = sets.first?.exerciseName else { return }
+        ZStack {
+            Color.bgBase.ignoresSafeArea()
 
-                Section {
-                    // Volume summary
-                    HStack {
-                        Label("Volume", systemImage: "scalemass")
-                        Spacer()
-                        Text(unit.label(for: session.volumePerExercise[exerciseId] ?? 0))
-                            .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(spacing: 12) {
+
+                    // Hero — total volume
+                    LabeledCard("Total Volume") {
+                        HeroNumber(
+                            value: volumeString(session.totalVolume),
+                            unit: unit.rawValue
+                        )
                     }
+                    .padding(.horizontal, 16)
 
-                    HStack {
-                        Label("Sets", systemImage: "list.number")
-                        Spacer()
-                        Text("\(sets.count)")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    // Individual sets
-                    ForEach(sets) { set in
-                        HStack {
-                            Text("Set \(setIndex(set, in: sets))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text("\(set.reps) × \(unit.label(for: set.weightLbs))")
-                                .font(.caption)
-                            if set.autoSaved {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
-                            }
+                    // Per-exercise sections
+                    ForEach(exerciseOrder, id: \.self) { exerciseId in
+                        if let sets = session.setsByExercise[exerciseId], !sets.isEmpty,
+                           let name = sets.first?.exerciseName {
+                            ExerciseDetailCard(
+                                name: name,
+                                sets: sets,
+                                bestSetId: session.bestSet?.id,
+                                velocityTrend: session.normalizedVelocityTrend(for: exerciseId),
+                                isApproachingFailure: session.isApproachingFailure(for: exerciseId),
+                                unit: unit
+                            )
+                            .padding(.horizontal, 16)
                         }
                     }
 
-                    // Velocity sparkline (if we have data)
-                    let trend = session.normalizedVelocityTrend(for: exerciseId)
-                    if trend.count >= 2 {
-                        VelocitySparkline(
-                            trend: trend,
-                            isApproachingFailure: session.isApproachingFailure(for: exerciseId)
-                        )
-                        .frame(height: 60)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    Spacer().frame(height: 32)
+                }
+                .padding(.top, 16)
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 1) {
+                    Text(session.startTime, style: .date)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    if let d = session.durationDisplay {
+                        Text(d)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.textMuted)
                     }
-
-                } header: {
-                    Text(firstName)
                 }
             }
         }
-        .navigationTitle(session.startTime, style: .date)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(Color.bgBase, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
     }
 
-    private func setIndex(_ set: WorkoutSet, in sets: [WorkoutSet]) -> Int {
-        (sets.firstIndex(where: { $0.id == set.id }) ?? 0) + 1
+    private func volumeString(_ v: Double) -> String {
+        let display = unit.converted(v)
+        if display >= 1000 {
+            return String(format: "%.1fk", display / 1000)
+        }
+        return String(format: "%.0f", display)
     }
 }
 
-// MARK: — Velocity sparkline
+// MARK: — Exercise card
 
-private struct VelocitySparkline: View {
-    let trend: [Double]       // normalized 0–1, index = set order
+private struct ExerciseDetailCard: View {
+    let name: String
+    let sets: [WorkoutSet]
+    let bestSetId: UUID?
+    let velocityTrend: [Double]
     let isApproachingFailure: Bool
+    let unit: WeightUnit
+
+    private var exerciseVolume: Double { sets.reduce(0) { $0 + $1.volume } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Bar Velocity")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            // Header
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    CardLabel(text: name)
+                    Text("\(unit.label(for: exerciseVolume)) · \(sets.count) sets")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.textSecondary)
+                }
                 Spacer()
-                if isApproachingFailure {
-                    Label("Approaching failure", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
             }
-            Chart {
-                ForEach(Array(trend.enumerated()), id: \.offset) { index, value in
-                    LineMark(
-                        x: .value("Set", index + 1),
-                        y: .value("Velocity", value)
-                    )
-                    .foregroundStyle(isApproachingFailure ? .orange : .blue)
 
-                    AreaMark(
-                        x: .value("Set", index + 1),
-                        y: .value("Velocity", value)
+            // Divider
+            Rectangle()
+                .fill(Color.border)
+                .frame(height: 0.5)
+
+            // Set table
+            VStack(spacing: 0) {
+                SetTableHeader()
+                    .padding(.bottom, 4)
+
+                ForEach(Array(sets.enumerated()), id: \.element.id) { index, set in
+                    SetTableRow(
+                        index: index + 1,
+                        set: set,
+                        unit: unit,
+                        isBest: set.id == bestSetId
                     )
-                    .foregroundStyle(
-                        (isApproachingFailure ? Color.orange : Color.blue).opacity(0.15)
-                    )
+
+                    if index < sets.count - 1 {
+                        Rectangle()
+                            .fill(Color.border.opacity(0.5))
+                            .frame(height: 0.5)
+                            .padding(.horizontal, 4)
+                    }
                 }
             }
-            .chartYScale(domain: 0...1.2)
-            .chartXAxis(.hidden)
-            .chartYAxis(.hidden)
+
+            // Velocity sparkline
+            if velocityTrend.count >= 2 {
+                Rectangle()
+                    .fill(Color.border)
+                    .frame(height: 0.5)
+
+                VelocitySparkline(
+                    trend: velocityTrend,
+                    isApproachingFailure: isApproachingFailure
+                )
+            }
         }
+        .gymCard()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
