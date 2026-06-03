@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import Combine
+import CoreMotion
 
 // Central state for an active workout session on the Watch.
 // Drives all Watch views. Owns MotionManager and WorkoutRepository interactions.
@@ -37,6 +38,9 @@ final class SessionViewModel: ObservableObject {
     // Last weight used per exercise in this session — for pre-fill
     private var lastWeightByExercise: [UUID: Double] = [:]
 
+    // Injected by WatchContentView from UserSettings after SwiftData loads
+    var userSettings: UserSettings?
+
     init(repository: WorkoutRepository) {
         self.repository = repository
         bindMotionManager()
@@ -64,9 +68,17 @@ final class SessionViewModel: ObservableObject {
     func beginSet() {
         guard let exercise = activeExercise, phase == .ready || phase == .summary else { return }
         let definition = ExerciseCatalog.all.first { $0.name == exercise.name } ?? ExerciseCatalog.benchPress
-        motion.start(for: definition)
+        let calibrated = userSettings?.threshold(for: exercise.id, default: definition.accelerationThreshold)
+        motion.start(for: definition, calibratedThreshold: calibrated)
         phase = .detecting
         liveRepCount = 0
+    }
+
+    // Returns to exercise picker without ending the session
+    func returnToExercisePicker() {
+        guard phase == .summary else { return }
+        activeExercise = nil
+        phase = .idle
     }
 
     private func handleSetEnded(reps: Int, velocitySamples: [Double]) {

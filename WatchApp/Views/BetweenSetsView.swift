@@ -1,15 +1,16 @@
 import SwiftUI
 
-// Shown after weight is confirmed — displays last set summary, offers next set or end.
+// Shown after weight is confirmed — last set summary, next-set or change-exercise options.
 struct BetweenSetsView: View {
     @ObservedObject var viewModel: SessionViewModel
     var unit: WeightUnit
 
     var body: some View {
         VStack(spacing: 12) {
+            // Last set summary
             if let summary = viewModel.lastSetSummary {
                 VStack(spacing: 2) {
-                    HStack {
+                    HStack(spacing: 4) {
                         Text("Set \(summary.setNumber)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -25,18 +26,21 @@ struct BetweenSetsView: View {
             }
 
             VStack(spacing: 6) {
+                // Next set — same exercise
                 Button("Next Set") {
                     viewModel.beginSet()
                 }
                 .buttonStyle(.bordered)
                 .tint(.blue)
 
+                // Change exercise — pops back to picker via phase reset
                 Button("Change Exercise") {
-                    // Pops to exercise picker
+                    viewModel.returnToExercisePicker()
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
 
+                // End session
                 Button("End Session", role: .destructive) {
                     viewModel.endSession()
                 }

@@ -17,7 +17,15 @@ struct ExercisePickerView: View {
                 }
             }
         }
-        .navigationTitle("Select Exercise")
+        .navigationTitle("gymOS")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink(destination: WatchSettingsView()) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14))
+                }
+            }
+        }
     }
 
     private func muscleGroupIcon(_ group: MuscleGroup) -> String {
