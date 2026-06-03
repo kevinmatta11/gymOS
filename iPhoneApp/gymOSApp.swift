@@ -12,6 +12,9 @@ struct gymOSApp: App {
             let context = ModelContext(container)
             repository = WorkoutRepository(context: context)
             try repository.seedExercisesIfNeeded()
+            #if DEBUG
+            try SeedData.populate(repository: repository)
+            #endif
         } catch {
             fatalError("Failed to create SwiftData container: \(error)")
         }
