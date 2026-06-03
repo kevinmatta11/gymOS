@@ -1,381 +1,311 @@
-# UI Redesign Spec: gymOS Web Dashboard
+# UI Redesign Spec: gymOS iOS App — Whoop-Inspired
 **Date:** 2026-06-03
 **Status:** approved
-**Replaces:** iPhoneApp (native SwiftUI companion)
+**Scope:** iPhone companion app only (SwiftUI). Watch app UI unchanged.
 
 ---
 
-## Decision: Web App Companion
+## What We're Fixing
 
-shadcn/ui is a React component library — it cannot run in a native SwiftUI app.
-The Watch app stays native SwiftUI (required for CoreMotion).
-The iPhone companion is replaced with a React web app using shadcn + Vite + Tailwind.
+The current UI uses default SwiftUI List + Form styling — system grey backgrounds,
+blue tint, no visual hierarchy. It looks like a settings screen, not a performance app.
 
-**Data bridge:** The Watch app exports session JSON via WatchConnectivity to a lightweight
-native iOS shell app (`WKWebView` host), which writes sessions to a local JSON file the
-web app reads. For MVP testing, sessions can be imported manually via a JSON upload button.
-
----
-
-## Design Direction: Whoop-Inspired
-
-### Why Whoop works
-- Near-zero chrome — the data IS the UI
-- Dark background makes numbers pop
-- Single accent color per metric (strain = red, recovery = green, sleep = blue)
-- Large primary number, small secondary label — hierarchy is instant
-- Cards are containers for one idea, never cluttered
-- No gradients, no shadows — flat and confident
-
-### What we take from Whoop
-- Pure black background `#0A0A0A`
-- Tight typographic scale — one dominant number per card
-- Color encodes meaning, not decoration
-- Minimal navigation — everything visible in 2 taps
-- Charts are ink, not widgets — no chart toolbars or legends cluttering the viz
-
-### What we do differently (gymOS is strength, not cardio)
-- Whoop is red/orange for strain — we use it for approaching-failure warnings
-- Our primary accent is white — clean lifter aesthetic
-- Volume and 1RM are the hero metrics, not HRV
-- Session detail is more tabular (sets × reps × weight) than Whoop's timeline view
+Whoop works because:
+- The data IS the design — numbers are enormous, labels are tiny
+- Color encodes meaning (green = good, orange = warning), never decoration
+- Pure black background makes every metric feel premium
+- One idea per card — never cluttered
+- Charts are ink, not chrome — no axis labels unless necessary
 
 ---
 
-## Color System
+## Design System
 
-```
-Background layers:
-  --bg-base:        #0A0A0A   page background
-  --bg-card:        #111111   card surface
-  --bg-elevated:    #1A1A1A   hover states, inputs
+### Colors
 
-Borders:
-  --border:         #222222   card edges
-  --border-subtle:  #1A1A1A   dividers inside cards
+```swift
+// Background
+Color("BgBase")      // #0A0A0A  — page, ZStack base
+Color("BgCard")      // #111111  — card surface
+Color("BgElevated")  // #1C1C1E  — inputs, pickers (matches iOS dark)
 
-Text:
-  --text-primary:   #FFFFFF   headings, primary numbers
-  --text-secondary: #A1A1AA   labels, secondary info  (zinc-400)
-  --text-muted:     #52525B   timestamps, metadata    (zinc-600)
+// Borders
+Color("Border")      // #2C2C2E  — card edges
 
-Accent:
-  --accent-white:   #FFFFFF   primary interactive / highlight
-  --accent-green:   #22C55E   positive trend, PR
-  --accent-orange:  #F97316   approaching failure, warning
-  --accent-red:     #EF4444   failure / critical
+// Text
+Color("TextPrimary")   // #FFFFFF
+Color("TextSecondary") // #A1A1AA  (zinc-400)
+Color("TextMuted")     // #52525B  (zinc-600)
 
-Chart colors:
-  Chest:      #3B82F6   blue
-  Legs:       #22C55E   green
-  Back:       #F59E0B   amber
-  Shoulders:  #A855F7   purple
-```
+// Semantic
+Color("AccentGreen")   // #22C55E  — PR, positive trend
+Color("AccentOrange")  // #F97316  — approaching failure, auto-save warning
+Color("AccentRed")     // #EF4444  — critical
 
----
-
-## Typography
-
-```
-Font: Inter (via @fontsource/inter)
-
-Scale:
-  Hero number:    72px  font-weight: 700  tracking: -2px
-  Section number: 40px  font-weight: 700  tracking: -1px
-  Card title:     14px  font-weight: 600  tracking: +0.5px  uppercase
-  Body:           14px  font-weight: 400
-  Label:          12px  font-weight: 500  text-secondary
-  Micro:          11px  font-weight: 400  text-muted
+// Muscle group chart colors
+Color("ChartChest")     // #3B82F6  blue
+Color("ChartLegs")      // #22C55E  green
+Color("ChartBack")      // #F59E0B  amber
+Color("ChartShoulders") // #A855F7  purple
 ```
 
----
+### Typography
 
-## App Structure
+```swift
+// Hero — the dominant number on each screen
+.font(.system(size: 64, weight: .bold, design: .rounded))
+.tracking(-2)
 
-```
-gymOS Web App
-├── / (Dashboard)           — today's snapshot + recent sessions
-├── /sessions               — session history list
-├── /sessions/:id           — session detail
-├── /progress               — trends: volume chart + 1RM chart
-└── /settings               — weight unit, data import/export
-```
+// Section number — cards with single metrics
+.font(.system(size: 40, weight: .bold, design: .rounded))
+.tracking(-1)
 
-Navigation: persistent left sidebar on desktop, bottom tab bar on mobile (375px breakpoint).
+// Card label — always uppercase, small, secondary color
+.font(.system(size: 11, weight: .semibold))
+.tracking(1.5)
+.textCase(.uppercase)
+.foregroundStyle(Color("TextSecondary"))
 
----
+// Body — set rows, descriptions
+.font(.system(size: 14, weight: .regular))
 
-## Screen-by-Screen Plan
-
----
-
-### Screen 1: Dashboard `/`
-
-**Purpose:** At a glance — what happened in the last session and am I trending up?
-
-**Layout (mobile):**
-```
-┌──────────────────────────────┐
-│  gymOS              [import] │  ← header, 48px
-├──────────────────────────────┤
-│  LAST SESSION                │  ← card
-│  Today · 54 min              │
-│                              │
-│  4,960        lbs volume     │  ← hero number
-│  ████████░░   velocity trend │  ← 40px sparkline
-├──────────────────────────────┤
-│  BENCH 1RM ESTIMATE          │  ← card
-│                              │
-│  ~195 lbs  ±10%              │  ← number + badge
-│  ↑ +7.5 lbs vs last week     │  ← trend delta, green
-│  [────────────────── chart]  │  ← 80px mini sparkline
-├──────────────────────────────┤
-│  THIS WEEK                   │  ← card
-│  Chest  ████░░  3,200 lbs   │
-│  Legs   ██░░░░  1,800 lbs   │
-│  Back   ███░░░  2,100 lbs   │
-│  Shldrs █░░░░░    960 lbs   │
-└──────────────────────────────┘
+// Mono — weights, reps (align columns)
+.font(.system(size: 14, weight: .medium, design: .monospaced))
 ```
 
-**shadcn components:** `Card`, `CardHeader`, `CardContent`, `Badge`, `Progress`
+### Card Style
+Every card:
+- Background: `Color("BgCard")`
+- Corner radius: `16`
+- Border: `Color("Border")`, 0.5pt
+- Padding: `20` horizontal, `16` vertical
+- No shadows
 
----
-
-### Screen 2: Sessions `/sessions`
-
-**Purpose:** Reverse-chronological session log.
-
-**Layout:**
-```
-┌──────────────────────────────┐
-│  Sessions                    │
-├──────────────────────────────┤
-│  Today                       │  ← date group separator
-│  ┌────────────────────────┐  │
-│  │ Bench · OHP            │  │  ← session row
-│  │ 4,960 lbs · 4 exercises│  │
-│  │ 54 min                 │  │
-│  └────────────────────────┘  │
-│  Yesterday                   │
-│  ┌────────────────────────┐  │
-│  │ Row · Pull-up           │  │
-│  │ 3,840 lbs · 7 sets     │  │
-│  └────────────────────────┘  │
-└──────────────────────────────┘
-```
-
-**shadcn components:** `Card`, `Separator`, `Badge`
-
----
-
-### Screen 3: Session Detail `/sessions/:id`
-
-**Purpose:** Full breakdown of a single session — every set, volume per exercise, velocity.
-
-**Layout:**
-```
-┌──────────────────────────────┐
-│  ← Sessions                  │
-│  Jun 3, 2026 · 54 min        │
-├──────────────────────────────┤
-│  TOTAL VOLUME                │
-│  4,960 lbs                   │  ← hero number
-├──────────────────────────────┤
-│  BENCH PRESS                 │  ← exercise section
-│  Volume: 3,100 lbs  Sets: 4  │
-│                              │
-│  Set 1  8 × 155 lbs   2.0g  │  ← set row, velocity badge
-│  Set 2  8 × 155 lbs   1.8g  │
-│  Set 3  6 × 155 lbs   1.5g  │
-│  Set 4  6 × 155 lbs   1.1g  ⚠│  ← orange warning if auto-saved
-│                              │
-│  BAR VELOCITY                │
-│  ████▇▅▃▁  Approaching fail │  ← sparkline + label
-├──────────────────────────────┤
-│  OVERHEAD PRESS              │
-│  Volume: 1,860 lbs  Sets: 3  │
-│  ...                         │
-└──────────────────────────────┘
-```
-
-**shadcn components:** `Card`, `Table`, `TableRow`, `Badge`, `Separator`
-**Charts:** Recharts `AreaChart` for velocity sparkline
-
----
-
-### Screen 4: Progress `/progress`
-
-**Purpose:** Trends over time — the reason to use the app.
-
-**Layout:**
-```
-┌──────────────────────────────┐
-│  Progress                    │
-│  [Volume] [1RM]              │  ← Tabs
-├──────────────────────────────┤
-│  WEEKLY VOLUME               │
-│  by muscle group · 8 weeks   │
-│                              │
-│  lbs                         │
-│  12k ┤                  ██   │
-│  8k  ┤            ██   ████  │
-│  4k  ┤      ████ ████ █████  │
-│      └──────────────────────  │
-│  Chest ■  Legs ■  Back ■  Shldrs ■│
-├──────────────────────────────┤
-│  BENCH PRESS 1RM             │
-│  Epley estimate · ±10% band  │
-│                              │
-│  lbs                         │
-│  210 ┤                  •    │
-│  195 ┤           •  •  ╱─   │  ← shaded band
-│  180 ┤     •  • ╱─────      │
-│      └──────────────────────  │
-└──────────────────────────────┘
-```
-
-**shadcn components:** `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent`, `Card`
-**Charts:** Recharts `BarChart` (stacked) + `AreaChart` with dual areas for band
-
----
-
-### Screen 5: Settings `/settings`
-
-**Layout:**
-```
-┌──────────────────────────────┐
-│  Settings                    │
-├──────────────────────────────┤
-│  UNITS                       │
-│  Weight    [lbs] [kg]        │  ← ToggleGroup
-├──────────────────────────────┤
-│  DATA                        │
-│  [Import session JSON]       │  ← Button, file picker
-│  [Export all data]           │
-├──────────────────────────────┤
-│  ABOUT                       │
-│  Version   1.0.0             │
-│  Storage   Local only        │
-└──────────────────────────────┘
+```swift
+// Shared modifier
+struct GymCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(Color("BgCard"))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color("Border"), lineWidth: 0.5)
+            )
+    }
+}
 ```
 
 ---
 
-## Component Architecture
-
-```
-src/
-├── components/
-│   ├── ui/                    ← shadcn primitives (auto-generated, don't edit)
-│   ├── layout/
-│   │   ├── Sidebar.tsx        ← desktop nav
-│   │   └── BottomNav.tsx      ← mobile nav
-│   ├── dashboard/
-│   │   ├── LastSessionCard.tsx
-│   │   ├── OneRMCard.tsx
-│   │   └── WeeklyVolumeCard.tsx
-│   ├── sessions/
-│   │   ├── SessionList.tsx
-│   │   ├── SessionRow.tsx
-│   │   └── SessionDetail.tsx
-│   ├── progress/
-│   │   ├── VolumeChart.tsx
-│   │   └── OneRMChart.tsx
-│   └── shared/
-│       ├── HeroNumber.tsx     ← large number + label
-│       ├── VelocitySparkline.tsx
-│       └── MetricBadge.tsx    ← colored badge for PRs, warnings
-├── lib/
-│   ├── data.ts                ← parse session JSON, compute metrics
-│   ├── calculations.ts        ← Epley, volume, velocity normalization
-│   └── store.ts               ← Zustand store, localStorage persistence
-├── types/
-│   └── workout.ts             ← WorkoutSession, WorkoutSet, Exercise types
-└── app/
-    ├── routes.tsx
-    └── main.tsx
-```
+## Screen-by-Screen Redesign
 
 ---
 
-## Tech Stack
+### Screen 1: Sessions Tab (SessionListView)
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Framework | React 18 + Vite | Fast dev, no SSR needed |
-| UI components | shadcn/ui | Unstyled primitives, full control |
-| Styling | Tailwind CSS v4 | Co-located, no CSS files |
-| Charts | Recharts | Works with shadcn chart primitives |
-| State | Zustand | Simple, no boilerplate |
-| Data | localStorage + JSON import | No backend, matches privacy promise |
-| Routing | React Router v6 | Simple SPA routing |
-| Types | TypeScript strict | Match Swift model contracts exactly |
+**Current:** Plain SwiftUI List with default separators.
+
+**New:**
+```
+╔══════════════════════════════╗
+║  GYMOS              [+]      ║  ← nav, black bg
+╠══════════════════════════════╣
+║  TODAY                       ║  ← date section header, muted uppercase
+║                              ║
+║ ┌──────────────────────────┐ ║
+║ │ Bench · OHP              │ ║  ← exercise names, primary text
+║ │ 4,960 lbs                │ ║  ← volume, large
+║ │ 4 sets · 54 min    →     │ ║  ← metadata, secondary
+║ └──────────────────────────┘ ║
+║                              ║
+║  YESTERDAY                   ║
+║ ┌──────────────────────────┐ ║
+║ │ Row · Pull-up             │ ║
+║ │ 3,840 lbs                │ ║
+║ │ 7 sets · 48 min    →     │ ║
+║ └──────────────────────────┘ ║
+╚══════════════════════════════╝
+```
+
+**Changes:**
+- `.listStyle(.plain)` → custom `LazyVStack` on black background
+- Session row: volume as the dominant number (28pt bold rounded)
+- Exercise names as subtitle (14pt secondary)
+- No list separators — card spacing provides rhythm
+- Date group headers: 11pt uppercase muted text
 
 ---
 
-## Data Flow (No Backend)
+### Screen 2: Session Detail (SessionDetailView)
 
-```
-Apple Watch
-    ↓ CoreMotion + SwiftData
-Watch App (Swift)
-    ↓ WatchConnectivity
-iOS Shell / WKWebView host (future)
-    ↓ window.postMessage or file write
-Web App (React)
-    ↓ localStorage / JSON
+**Current:** Plain List with Section headers, basic HStack rows.
 
-For MVP testing (no iOS shell yet):
-  → Manual JSON import via file picker in Settings
-  → SeedData.json generated from Swift seed data
+**New:**
 ```
+╔══════════════════════════════╗
+║  ← Sessions  Jun 3          ║
+╠══════════════════════════════╣
+║                              ║
+║  TOTAL VOLUME                ║  ← card label (11pt uppercase)
+║  4,960 lbs                   ║  ← 64pt hero number
+║                              ║
+╠══════════════════════════════╣
+║  BENCH PRESS                 ║  ← exercise card header
+║  3,100 lbs · 4 sets          ║  ← summary line
+║  ─────────────────────────   ║
+║   #  REPS   WEIGHT    VEL   ║  ← column headers (mono, muted)
+║   1   8    155 lbs   2.0g   ║
+║   2   8    155 lbs   1.8g   ║
+║   3   6    155 lbs   1.5g   ║
+║   4   6    155 lbs   1.1g ⚠ ║  ← orange dot if auto-saved
+║  ─────────────────────────   ║
+║  ████▇▆▄▂  Approaching      ║  ← velocity sparkline + label
+║            failure ⚠        ║
+╚══════════════════════════════╝
+```
+
+**Changes:**
+- Total volume as hero number at top, not buried in a list
+- Each exercise in its own card with column-aligned set table
+- Velocity sparkline always shown per exercise (hidden when < 2 sets)
+- "Approaching failure" label in orange below sparkline
+- Auto-saved sets get a subtle orange left border on the row, not just an icon
 
 ---
 
-## What Changes vs Current iPhone App
+### Screen 3: Progress Tab (ProgressTabView)
 
-| Current (SwiftUI) | New (React + shadcn) |
-|-------------------|----------------------|
-| Native iOS only | Works in any browser + iOS Safari |
-| System UI components | Whoop-style dark design system |
-| Charts via Swift Charts | Recharts with custom dark theme |
-| SwiftData persistence | localStorage + JSON import |
-| WatchConnectivity direct | Manual import for now; native bridge later |
+**Current:** Two charts stacked, SwiftUI Charts default styling.
+
+**New:**
+```
+╔══════════════════════════════╗
+║  PROGRESS                    ║
+║  [Volume]  [1RM]             ║  ← segmented control, custom dark style
+╠══════════════════════════════╣
+║                              ║
+║  WEEKLY VOLUME               ║  ← card label
+║  Trailing 8 weeks            ║  ← subtitle
+║                              ║
+║  ┌ stacked bar chart ──────┐ ║
+║  │ 12k ┤             █████│ ║
+║  │  8k ┤       ████ ██████│ ║
+║  │  4k ┤ ████ █████ ██████│ ║
+║  │     └────────────────── │ ║
+║  │ May          Jun        │ ║
+║  └─────────────────────────┘ ║
+║                              ║
+║  ■ Chest  ■ Legs  ■ Back     ║  ← legend row, compact
+║  ■ Shoulders                 ║
+╠══════════════════════════════╣
+║  [on 1RM tab:]               ║
+║                              ║
+║  BENCH PRESS 1RM             ║
+║  ~195 lbs  ↑ +7.5 vs last   ║  ← current estimate + delta
+║                              ║
+║  ┌ line chart + band ──────┐ ║
+║  │     ·  ·                │ ║
+║  │  · ╱───────╲            │ ║  ← shaded ±10% band
+║  │ ╱─────────────·         │ ║
+║  └─────────────────────────┘ ║
+║  Epley estimate · ±10% band  ║  ← disclaimer, muted
+╚══════════════════════════════╝
+```
+
+**Changes:**
+- Tabs replaced with custom `Picker` styled as a pill segmented control
+- Chart axes: dark grid lines (#2C2C2E), no border
+- Chart labels: 11pt muted text, not default blue
+- 1RM card shows current estimate + delta vs last week as headline
+- Band rendered as semi-transparent fill, same blue as line
+- Legend: compact horizontal pill badges, not SwiftUI default
+
+---
+
+### Screen 4: Settings (SettingsView)
+
+**Current:** SwiftUI Form with grouped sections — system grey.
+
+**New:**
+```
+╔══════════════════════════════╗
+║  SETTINGS                    ║
+╠══════════════════════════════╣
+║                              ║
+║  UNITS                       ║  ← card label
+║  ┌──────────────────────────┐║
+║  │ Weight Unit  [lbs] [kg]  │║  ← inline toggle
+║  └──────────────────────────┘║
+║                              ║
+║  ABOUT                       ║
+║  ┌──────────────────────────┐║
+║  │ Version         1.0.0    │║
+║  │ Storage    Local only    │║
+║  └──────────────────────────┘║
+╚══════════════════════════════╝
+```
+
+**Changes:**
+- `.form` replaced with card-based layout on black background
+- Picker styled as two-segment pill (not system segmented)
+- All system grey gone
+
+---
+
+## Shared Components to Build
+
+| Component | Description |
+|-----------|-------------|
+| `GymCard` | ViewModifier — dark bg, border, corner radius |
+| `CardLabel` | 11pt uppercase secondary label for card titles |
+| `HeroNumber` | Large bold number + small unit label below |
+| `SetTableRow` | Monospaced columns: set# / reps / weight / velocity |
+| `VelocitySparkline` | AreaChart, orange tint when approaching failure |
+| `MuscleGroupLegend` | Horizontal colored dot + label row |
+| `DeltaBadge` | ↑ / ↓ delta vs previous period, green/red |
+| `FailureWarning` | Orange label + icon strip |
+
+---
+
+## Files to Change
+
+| File | Change |
+|------|--------|
+| `SessionListView.swift` | Full rewrite — LazyVStack, custom session cards |
+| `SessionDetailView.swift` | Full rewrite — hero number, set table, sparkline redesign |
+| `ProgressTabView.swift` | Full rewrite — dark charts, segmented picker, 1RM delta |
+| `SettingsView.swift` | Full rewrite — card layout replaces Form |
+| `iPhoneContentView.swift` | TabView styling — dark tab bar, custom icons |
+| *(new)* `DesignSystem.swift` | All shared modifiers, colors, typography helpers |
+| *(new)* `Components/` | HeroNumber, SetTableRow, VelocitySparkline, etc. |
+
+**Watch app:** zero changes.
 
 ---
 
 ## What Does NOT Change
 
-- Watch App — stays SwiftUI, CoreMotion, unchanged
-- Data contracts — `WorkoutSession`, `WorkoutSet` types mirror Swift models exactly
-- Calculations — Epley formula, velocity normalization, failure threshold identical
-- Privacy — local only, no network
+- All data models, repository, calculations — untouched
+- Epley formula, velocity normalization, failure threshold — untouched
+- Watch app (SwiftUI + CoreMotion) — untouched
+- Acceptance criteria from PRD — same requirements, new skin
 
 ---
 
-## Build Order
+## Acceptance Criteria (UI)
 
-1. `npm create vite@latest` + shadcn init + Tailwind config
-2. Types + data layer (`workout.ts`, `calculations.ts`, `store.ts`)
-3. Layout shell (Sidebar + BottomNav + routing)
-4. Dashboard screen (3 cards)
-5. Sessions list + detail
-6. Progress charts
-7. Settings + JSON import/export
-8. Polish: transitions, empty states, mobile responsive
-
----
-
-## Acceptance Criteria
-
-- [ ] All screens render in dark mode only (no light mode toggle)
-- [ ] Mobile (375px) and desktop (1280px) layouts both work
-- [ ] Import a session JSON file → all screens update correctly
-- [ ] Epley 1RM chart renders ±10% band, never a single value
-- [ ] Velocity sparkline shows approaching-failure warning in orange
-- [ ] Weekly volume stacked bar chart renders for 8 weeks of data
-- [ ] PR (personal record) best set is highlighted in green
-- [ ] Auto-saved sets show orange warning indicator
-- [ ] No data leaves the browser (verified: no network requests)
-- [ ] Empty states render for all screens (no data yet)
+- [ ] All screens render on pure black background (#0A0A0A) in dark mode
+- [ ] No default SwiftUI List or Form chrome visible anywhere in the app
+- [ ] Session detail total volume renders as hero number (≥ 48pt)
+- [ ] Velocity sparkline renders in orange when `isApproachingFailure == true`
+- [ ] "Approaching failure" label appears in orange, not system red
+- [ ] 1RM chart renders ±10% shaded band alongside line
+- [ ] Weekly volume chart renders stacked bars with correct muscle group colors
+- [ ] Auto-saved sets show orange left-border highlight in set table
+- [ ] PRs (best set) show green highlight
+- [ ] Tab bar is dark — no system grey background
+- [ ] All text outside cards uses `Color("BgBase")` as background
+- [ ] App looks correct on iPhone 14 (390pt) and iPhone SE (375pt)
